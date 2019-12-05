@@ -26,7 +26,7 @@ amcl:
     recovery_alpha_fast: 0.0
     recovery_alpha_slow: 0.0
     resample_interval: 1
-    robot_model_type: "differential"
+    robot_model_type: "omnidirectional"
     save_pose_rate: 0.5
     sigma_hit: 0.2
     tf_broadcast: true
@@ -55,12 +55,12 @@ dwb_controller:
   ros__parameters:
     use_sim_time: True
     debug_trajectory_details: True
-    min_vel_x: 0.0
-    min_vel_y: 0.0
+    min_vel_x: -0.26
+    min_vel_y: -0.26
     max_vel_x: 0.26
-    max_vel_y: 0.0
-    max_vel_theta: 1.0
-    min_speed_xy: 0.0
+    max_vel_y: 0.26
+    max_vel_theta: 0.0
+    min_speed_xy: -0.26
     max_speed_xy: 0.26
     min_speed_theta: 0.0
     min_x_velocity_threshold: 0.001
@@ -69,11 +69,11 @@ dwb_controller:
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
     acc_lim_x: 2.5
-    acc_lim_y: 0.0
-    acc_lim_theta: 3.2
+    acc_lim_y: 2.5
+    acc_lim_theta: 0.0
     decel_lim_x: -2.5
-    decel_lim_y: 0.0
-    decel_lim_theta: -3.2
+    decel_lim_y: -2.5
+    decel_lim_theta: 0.0
     vx_samples: 20
     vy_samples: 5
     vtheta_samples: 20
@@ -81,13 +81,15 @@ dwb_controller:
     linear_granularity: 0.05
     xy_goal_tolerance: 0.25
     transform_tolerance: 0.2
-    critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+    # yaw_goal_tolerance: 0.5
+    critics: ["Twirling", "Oscillation", "BaseObstacle", "PathDist", "GoalDist"]
     BaseObstacle.scale: 0.02
     PathAlign.scale: 0.0
     GoalAlign.scale: 0.0
     PathDist.scale: 32.0
     GoalDist.scale: 24.0
-    RotateToGoal.scale: 32.0
+    RotateToGoal.scale: 0.0
+
 
 local_costmap:
   local_costmap:
