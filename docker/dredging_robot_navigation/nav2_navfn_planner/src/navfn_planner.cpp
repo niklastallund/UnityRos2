@@ -179,50 +179,366 @@ double xCalc(const geometry_msgs::msg::Pose &start, const geometry_msgs::msg::Po
   return (goal.position.x - start.position.x);
 }
 
+/*******************************************************/
+/*******************************************************/
+/**************Coverage planning algorithm**************/
+/*******************Part 1, Classes*********************/
+/*******************************************************/
+/*******************************************************/
 
-std::vector<geometry_msgs::msg::Pose> generate_plan(geometry_msgs::msg::Pose sw, geometry_msgs::msg::Pose nw, geometry_msgs::msg::Pose ne, geometry_msgs::msg::Pose se, geometry_msgs::msg::Pose start, double width)
+struct GridMap
 {
-  //double mWidth{se.position.x - sw.position.x};
-  double currentX{sw.position.x + width};
-  geometry_msgs::msg::Pose tmp;
-  std::vector<geometry_msgs::msg::Pose> res;
-  tmp.position.x = currentX;
-  tmp.position.y = start.position.y;
-  res.push_back(tmp);
-  tmp.position.y = sw.position.y;
-  res.push_back(tmp);
-  bool dir{true}; //True up, false down
-  while (currentX + width <= se.position.x)
-  {
-    if (dir)
+    int width, height;
+    double resolution, center_x, center_y, left_lower_x, left_lower_y;
+    std::vector<double> data;
+    GridMap(int w, int h, double r, double c_x, double c_y) : width{w}, height{h}, resolution{r}, center_x{c_x}, center_y{c_y}
     {
-      dir = false;
-      tmp.position.x = currentX;
-      tmp.position.y = nw.position.y;
-      res.push_back(tmp);
-      if (currentX + width < ne.position.x)
-      {
-        tmp.position.x = currentX + width;
-        tmp.position.y = nw.position.y;
-        res.push_back(tmp);
-      }
+        left_lower_x = center_x - (width / 2.0) * resolution;
+        left_lower_y = center_y - (height / 2.0) * resolution;
+        for (int i = 0; i < (width * height); i++)
+        {
+            data.push_back(0.0);
+        }
     }
-    else
+    ~GridMap() = default;
+    void set_value_from_xy_index(int index_x, int index_y, double val)
     {
-      dir = true;
-      tmp.position.x = currentX;
-      tmp.position.y = sw.position.y;
-      res.push_back(tmp);
-      if (currentX + width < se.position.x)
-      {
-        tmp.position.x = currentX + width;
-        tmp.position.y = sw.position.y;
-        res.push_back(tmp);
-      }
+        int grid_index{index_y * width + index_x};
+        if (0 <= grid_index && grid_index < (width * height))
+        {
+            data.at(grid_index) = val;
+        }
     }
-    currentX += width;
-  }
-  return res;
+    void set_value_from_polygon(std::vector<double> vx, std::vector<double> vy, double val, bool inside = true)
+    {
+        for (int index_x = 0; index_x < width; index_x++)
+        {
+            for (int index_y = 0; index_y < height; index_y++)
+            {
+                double x_pos = left_lower_x + index_x * resolution + resolution / 2.0;
+                double y_pos = left_lower_y + index_y * resolution + resolution / 2.0;
+                bool flag = check_inside_polygon(x_pos, y_pos, vx, vy);
+                if (flag == inside)
+                {
+                    set_value_from_xy_index(index_x, index_y, val);
+                }
+            }
+        }
+    }
+    bool check_occupied_from_xy_index(int xind, int yind, double occupied_val = 1.0)
+    {
+        double val{};
+        int grid_index{yind * width + xind};
+        if (0 <= grid_index && grid_index <= (height * width))
+        {
+            val = data.at(grid_index);
+        }
+        else
+        {
+            std::cerr << "grid_index out of bound!" << std::endl;
+        }
+        if (val >= occupied_val)
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    void expand_grid()
+    {
+        std::vector<std::pair<int, int>> v;
+        for (int index_x = 0; index_x < width; index_x++)
+        {
+            for (int index_y = 0; index_y < height; index_y++)
+            {
+                if (check_occupied_from_xy_index(index_x, index_y))
+                {
+                    v.push_back(std::pair<int, int>(index_x, index_y));
+                }
+            }
+        }
+        for (auto &&i : v)
+        {
+            set_value_from_xy_index(i.first + 1, i.second, 1.0);
+            set_value_from_xy_index(i.first, i.second + 1, 1.0);
+            set_value_from_xy_index(i.first + 1, i.second + 1, 1.0);
+            set_value_from_xy_index(i.first - 1, i.second, 1.0);
+            set_value_from_xy_index(i.first, i.second - 1, 1.0);
+            set_value_from_xy_index(i.first - 1, i.second - 1, 1.0);
+        }
+    }
+    bool check_inside_polygon(double x_pos, double y_pos, std::vector<double> vx, std::vector<double> vy)
+    {
+        size_t npoint{vx.size() - 1};
+        bool inside = false;
+        int i2;
+        double min_x{}, max_x{};
+        for (size_t i1 = 0; i1 < npoint; i1++)
+        {
+            i2 = (i1 + 1) % (npoint + 1);
+            if (vx.at(i1) >= vx.at(i2))
+            {
+                min_x = vx.at(i2);
+                max_x = vx.at(i1);
+            }
+            else
+            {
+                min_x = vx.at(i1);
+                max_x = vx.at(i2);
+            }
+            if (!(min_x < x_pos && x_pos < max_x))
+            {
+                continue;
+            }
+            if ((vy.at(i1) + (vy.at(i2) - vy.at(i1)) / (vx.at(i2) - vx.at(i1)) * (x_pos - vx.at(i1)) - y_pos) > 0.0)
+            {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+};
+struct SweepSearcher
+{
+    int moving_direction;
+    int sweeping_direction;
+    std::vector<int> x_indices_goal_y;
+    int goal_y;
+    std::vector<std::pair<int, int>> turning_window;
+    SweepSearcher(int mdir, int sdir, std::vector<int> v, int i) : moving_direction{mdir}, sweeping_direction{sdir}, x_indices_goal_y{v}, goal_y{i}
+    {
+        turning_window.push_back(std::pair<int, int>(0, 0));
+        turning_window.push_back(std::pair<int, int>(0, 0));
+        turning_window.push_back(std::pair<int, int>(0, 0));
+        turning_window.push_back(std::pair<int, int>(0, 0));
+        update_turning_window();
+    }
+    void update_turning_window()
+    {
+        turning_window.at(0) = std::pair<int, int>(moving_direction, 0);
+        turning_window.at(1) = std::pair<int, int>(moving_direction, sweeping_direction);
+        turning_window.at(2) = std::pair<int, int>(0, sweeping_direction);
+        turning_window.at(3) = std::pair<int, int>(-moving_direction, sweeping_direction);
+    }
+};
+
+/*******************************************************/
+/*******************************************************/
+/**************Coverage planning algorithm**************/
+/******************Part 1, Algorithm********************/
+/*******************************************************/
+/*******************************************************/
+
+std::vector<geometry_msgs::msg::Pose> generate_plan(geometry_msgs::msg::Pose p1, geometry_msgs::msg::Pose p2, geometry_msgs::msg::Pose p3, geometry_msgs::msg::Pose p4, double resolution = 0.5)
+{
+    std::vector<double> initial_x;
+    std::vector<double> initial_y;
+    initial_x.push_back(p1.position.x);
+    initial_y.push_back(p1.position.y);
+    initial_x.push_back(p2.position.x);
+    initial_y.push_back(p2.position.y);
+    initial_x.push_back(p3.position.x);
+    initial_y.push_back(p3.position.y);
+    initial_x.push_back(p4.position.x);
+    initial_y.push_back(p4.position.y);
+    initial_x.push_back(p1.position.x);
+    initial_y.push_back(p1.position.y);
+
+    // find_sweep_direction_and_start_posi:
+    double longest{}, dist_to_next_x{}, dist_to_next_y{}, start_pos_x{}, start_pos_y{};
+    for (size_t i = 0; i < initial_x.size() - 1; i++)
+    {
+        double delta_x = initial_x.at(i + 1) - initial_x.at(i);
+        double delta_y = initial_y.at(i + 1) - initial_y.at(i);
+        double line = std::hypot(delta_x, delta_y);
+        if (line > longest)
+        {
+            longest = line;
+            dist_to_next_x = delta_x;
+            dist_to_next_y = delta_y;
+            start_pos_x = initial_x.at(i);
+            start_pos_y = initial_y.at(i);
+        }
+    }
+
+    // convert_grid_coordinate:
+    double thetha{std::atan2(dist_to_next_y, dist_to_next_x)};
+    double cos{std::cos(-thetha)};
+    double sin{std::sin(-thetha)};
+    std::vector<double> rx;
+    std::vector<double> ry;
+    for (size_t i = 0; i < initial_x.size(); i++)
+    {
+        double dist_to_all_from_x = initial_x.at(i) - start_pos_x;
+        double dist_to_all_from_y = initial_y.at(i) - start_pos_y;
+        rx.push_back(dist_to_all_from_x * cos - dist_to_all_from_y * sin);
+        ry.push_back(dist_to_all_from_x * sin + dist_to_all_from_y * cos);
+    }
+
+    // setup_grid_map:
+    int width{static_cast<int>(std::ceil((*(std::max_element(rx.begin(), rx.end())) - *(std::min_element(rx.begin(), rx.end()))) / resolution) + 10)};
+    int height{static_cast<int>(std::ceil((*(std::max_element(ry.begin(), ry.end())) - *(std::min_element(ry.begin(), ry.end()))) / resolution) + 10)};
+    double center_x{}, center_y{};
+    for (size_t i = 0; i < rx.size(); i++)
+    {
+        center_x += rx.at(i);
+        center_y += ry.at(i);
+    }
+    center_x /= rx.size();
+    center_y /= rx.size();
+    GridMap grid_map(width, height, resolution, center_x, center_y);
+    grid_map.set_value_from_polygon(rx, ry, 1.0, false);
+    grid_map.expand_grid();
+    // SweepDirection.DOWN (-1)
+    std::vector<int> x_indices_goal_y{};
+    int goal_y{};
+    for (int index_y = 0; index_y < height; index_y++)
+    {
+        for (int index_x = 0; index_x < width; index_x++)
+        {
+            if (!(grid_map.check_occupied_from_xy_index(index_x, index_y)))
+            {
+                goal_y = index_y;
+                x_indices_goal_y.push_back(index_x);
+            }
+        }
+        if (goal_y)
+        {
+            break;
+        }
+    }
+
+    // create a SweepSearcher class
+    SweepSearcher sweep_searcher(-1, -1, x_indices_goal_y, goal_y);
+
+    // sweep_path_search:
+    // the algorithm
+    // search_start_grid:
+    x_indices_goal_y.clear();
+    goal_y = 0;
+    for (int index_y = height - 1; index_y >= 0; index_y--)
+    {
+        for (int index_x = width - 1; index_x >= 0; index_x--)
+        {
+            if (!(grid_map.check_occupied_from_xy_index(index_x, index_y)))
+            {
+                goal_y = index_y;
+                x_indices_goal_y.push_back(index_x);
+            }
+        }
+        if (goal_y)
+        {
+            break;
+        }
+    }
+    // MovingDirection.LEFT (-1)
+    int cxind{*std::max_element(x_indices_goal_y.begin(), x_indices_goal_y.end())};
+    grid_map.set_value_from_xy_index(cxind, goal_y, 0.5);
+    double x{grid_map.left_lower_x + cxind * resolution + resolution / 2.0};
+    double y{grid_map.left_lower_y + goal_y * resolution + resolution / 2.0};
+    std::vector<double> px;
+    std::vector<double> py;
+    px.push_back(x);
+    py.push_back(y);
+    while (true)
+    {
+        // move_target_grid:
+        int nxind = sweep_searcher.moving_direction + cxind;
+        int nyind = goal_y;
+        bool move_target_grid_return = false;
+        if (!(grid_map.check_occupied_from_xy_index(nxind, nyind, 0.5)))
+        {
+            cxind = nxind;
+            goal_y = nyind;
+        }
+        else
+        {
+            bool find_safe_turning_grid_return = false;
+            int ncxind, ncyind;
+            for (auto &&i : sweep_searcher.turning_window)
+            {
+                ncxind = i.first + cxind;
+                ncyind = i.second + goal_y;
+                if (!(grid_map.check_occupied_from_xy_index(ncxind, ncyind, 0.5)))
+                {
+                    find_safe_turning_grid_return = true;
+                    break;
+                }
+            }
+            if (!find_safe_turning_grid_return)
+            {
+                ncxind = -sweep_searcher.moving_direction + cxind;
+                ncyind = goal_y;
+                if (grid_map.check_occupied_from_xy_index(ncxind, ncyind))
+                {
+                    move_target_grid_return = true;
+                }
+            }
+            else
+            {
+                while (!(grid_map.check_occupied_from_xy_index(ncxind + sweep_searcher.moving_direction, ncyind, 0.5)))
+                {
+                    ncxind += sweep_searcher.moving_direction;
+                }
+                sweep_searcher.moving_direction *= -1;
+                sweep_searcher.update_turning_window();
+            }
+            if (!move_target_grid_return)
+            {
+                cxind = ncxind;
+                goal_y = ncyind;
+            }
+        }
+        bool is_search_done = true;
+        for (auto &&i : sweep_searcher.x_indices_goal_y)
+        {
+            if (!(grid_map.check_occupied_from_xy_index(i, sweep_searcher.goal_y, 0.5)))
+            {
+                is_search_done = false;
+                break;
+            }
+        }
+        if (is_search_done || move_target_grid_return)
+        {
+            break;
+        }
+        x = grid_map.left_lower_x + cxind * resolution + resolution / 2.0;
+        y = grid_map.left_lower_y + goal_y * resolution + resolution / 2.0;
+        if (px.size() > 1)
+        {
+            if ((*(py.end() - 2) - *(py.end() - 1)) * (*(px.end() - 2) - x) == (*(py.end() - 2) - y) * (*(px.end() - 2) - *(px.end() - 1)))
+            {
+                px.pop_back();
+                py.pop_back();
+            }
+        }
+        px.push_back(x);
+        py.push_back(y);
+        grid_map.set_value_from_xy_index(cxind, goal_y, 0.5);
+    }
+
+    // convert_global_coordinate:
+    thetha = std::atan2(dist_to_next_y, dist_to_next_x);
+    cos = std::cos(thetha);
+    sin = std::sin(thetha);
+    rx.clear();
+    ry.clear();
+    for (size_t i = 0; i < px.size(); i++)
+    {
+        rx.push_back((px.at(i) * cos - py.at(i) * sin) + start_pos_x);
+        ry.push_back((px.at(i) * sin + py.at(i) * cos) + start_pos_y);
+    }
+    geometry_msgs::msg::Pose tmp;
+    std::vector<geometry_msgs::msg::Pose> res;
+    for (size_t i = 0; i < rx.size(); i++)
+    {
+        tmp.position.x = rx.at(i);
+        tmp.position.y = ry.at(i);
+        res.push_back(tmp);
+    }
+    return res;
 }
 
 int xs = 1;
@@ -264,37 +580,31 @@ void NavfnPlanner::computePathToPose()
       return;
     }
 
-    // TEST goals
+    /*******************************************************/
+    /*******************************************************/
+    /**************Coverage planning algorithm**************/
+    /**************Part 3, Calling the function*************/
+    /*******************************************************/
+    /*******************************************************/
 
     geometry_msgs::msg::Pose startingPose;
     startingPose.position.x = -5.0;
     startingPose.position.y = -5.0;
     startingPose = start.pose;
     geometry_msgs::msg::Pose testGoal1;
-    testGoal1.position.x = -6.0;
-    testGoal1.position.y = -6.0;
+    testGoal1.position.x = -9.6;
+    testGoal1.position.y = -9.6;
     geometry_msgs::msg::Pose testGoal2;
-    testGoal2.position.x = -6.0;
-    testGoal2.position.y = 6.0;
+    testGoal2.position.x = -9.6;
+    testGoal2.position.y = 9.6;
     geometry_msgs::msg::Pose testGoal3;
-    testGoal3.position.x = 6.0;
-    testGoal3.position.y = 6.0;
+    testGoal3.position.x = 9.6;
+    testGoal3.position.y = 9.6;
     geometry_msgs::msg::Pose testGoal4;
-    testGoal4.position.x = 6.0;
-    testGoal4.position.y = -6.0;
-    std::vector<geometry_msgs::msg::Pose> testGoals = generate_plan(testGoal1, testGoal2, testGoal3, testGoal4, startingPose, 2 );
-    /*
-    
-    
+    testGoal4.position.x = 9.6;
+    testGoal4.position.y = -9.6;
+    std::vector<geometry_msgs::msg::Pose> testGoals = generate_plan(testGoal1, testGoal2, testGoal3, testGoal4, 0.5 );
 
-    testGoals.push_back(startingPose);
-    testGoals.push_back(testGoal1);
-    testGoals.push_back(testGoal2);
-    testGoals.push_back(testGoal3);
-    //testGoals.push_back(testGoal4);
-    
-    
-    */
     int goalValue = 0;
 
     // Update planner based on the new costmap size
@@ -323,7 +633,7 @@ void NavfnPlanner::computePathToPose()
     geometry_msgs::msg::Pose checkingPose;
     checkingPose.position.x = startingPose.position.x;
     checkingPose.position.y = startingPose.position.y;
-
+    
     for (size_t t = xs; t < testGoals.size(); t++)
     {
       while (!allPointsChecked)
@@ -414,6 +724,7 @@ void NavfnPlanner::computePathToPose()
         break;
       }
     }
+    
 
     foundPath = false;
     for (int i = goalValue; i < (int)testGoals.size(); i++)
